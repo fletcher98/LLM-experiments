@@ -26,8 +26,8 @@ else:
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Set your Hugging Face token and model name for Gemma
-hf_token = "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"
-default_model_name = "google/gemma-2-9b-it"
+hf_token = 
+default_model_name =
 
 # --- Step 1: ArXiv Scraper ---
 def fetch_arxiv_papers(query: str, num_documents: int = 10):

@@ -14,8 +14,8 @@ import torch
 
 def main():
     # Spotify API credentials
-    client_id = "YOUR_CLIENT_ID" # need to get
-    client_secret = "YOUR_CLIENT_SECRET" # need to get
+    client_id = 
+    client_secret = 
     
     # Set up Spotify client using client credentials flow
     client_credentials_manager = SpotifyClientCredentials(client_id=client_id, client_secret=client_secret)

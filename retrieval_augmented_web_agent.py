@@ -24,8 +24,8 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 # Hugging Face authentication token and model
-hf_token = "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"
-model_name = "google/gemma-2-9b-it"
+hf_token = 
+model_name = 
 
 def get_web_results(query, num_results=5):
     """

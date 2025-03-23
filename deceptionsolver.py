@@ -135,8 +135,8 @@ def setup_game():
     }
 
 def main():
-    hf_token = "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"
-    model_name = "google/gemma-2-9b-it" 
+    hf_token = 
+    model_name = 
 
     print("Loading the model, this may take a while...")
     try:
