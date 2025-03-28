@@ -12,25 +12,36 @@ on a set of predefined queries.
 """
 
 import argparse
+import logging
+import os
+import re
+import ast
+import operator
+from typing import List, Tuple, Any, Dict
+
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 import arxiv
-import re
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+# Configuration: Use environment variables with defaults.
+hf_token: str = os.getenv("HF_TOKEN", "")
+default_model_name: str = os.getenv("GEMMA_MODEL", "google/gemma-2-9b-it")
+
+# Device selection
 if torch.backends.mps.is_available():
     DEVICE = torch.device("mps")
 else:
     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Set your Hugging Face token and model name for Gemma
-hf_token = 
-default_model_name =
 
 # --- Step 1: ArXiv Scraper ---
-def fetch_arxiv_papers(query: str, num_documents: int = 10):
+def fetch_arxiv_papers(query: str, num_documents: int = 10) -> List[str]:
     """
     Fetches papers from arXiv based on the given query.
     Returns a list of documents combining the title and abstract.
@@ -45,14 +56,15 @@ def fetch_arxiv_papers(query: str, num_documents: int = 10):
         for result in search.results():
             doc = f"Title: {result.title}. Abstract: {result.summary}"
             documents.append(doc)
-        print(f"Fetched {len(documents)} papers from arXiv.")
+        logging.info(f"Fetched {len(documents)} papers from arXiv.")
         return documents
     except Exception as e:
-        print(f"Error fetching papers: {e}")
+        logging.error(f"Error fetching papers: {e}")
         return []
 
+
 # --- Step 2: Build the FAISS Index over ArXiv Documents ---
-def build_index(documents, embedder):
+def build_index(documents: List[str], embedder: SentenceTransformer) -> Tuple[faiss.IndexFlatL2, np.ndarray]:
     """
     Given a list of documents and a SentenceTransformer embedder,
     build a FAISS index for retrieval.
@@ -62,35 +74,87 @@ def build_index(documents, embedder):
     dim = doc_embeddings.shape[1]
     index = faiss.IndexFlatL2(dim)
     index.add(doc_embeddings)
-    print(f"Indexed {len(documents)} documents from arXiv.")
+    logging.info(f"Indexed {len(documents)} documents from arXiv.")
     return index, doc_embeddings
 
+
 # --- Step 3: Set up the language model (Gemma) ---
-def load_language_model(model_name=default_model_name, token=hf_token):
+def load_language_model(model_name: str = default_model_name, token: str = hf_token) -> Tuple[AutoTokenizer, Any]:
+    """
+    Loads the language model and tokenizer.
+    """
     tokenizer = AutoTokenizer.from_pretrained(model_name, use_auth_token=token)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(model_name, use_auth_token=token).to(DEVICE)
     model.eval()
+    logging.info(f"Loaded language model: {model_name}")
     return tokenizer, model
 
-# --- Step 4: Define a simple tool integration (calculator) ---
-def simple_calculator(expression):
+
+# --- Step 4: Define a safe calculator tool ---
+# Safe arithmetic evaluation using AST (only supports basic arithmetic)
+OPS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.Pow: operator.pow,
+    ast.USub: operator.neg,
+}
+
+
+def _safe_eval(node: ast.AST) -> float:
+    if isinstance(node, ast.Num):  # For Python < 3.8
+        return node.n
+    elif isinstance(node, ast.Constant):  # For Python 3.8+
+        if isinstance(node.value, (int, float)):
+            return node.value
+        else:
+            raise TypeError("Unsupported constant type.")
+    elif isinstance(node, ast.BinOp):
+        op_func = OPS.get(type(node.op))
+        if op_func is None:
+            raise TypeError(f"Unsupported binary operator: {node.op}")
+        return op_func(_safe_eval(node.left), _safe_eval(node.right))
+    elif isinstance(node, ast.UnaryOp):
+        op_func = OPS.get(type(node.op))
+        if op_func is None:
+            raise TypeError(f"Unsupported unary operator: {node.op}")
+        return op_func(_safe_eval(node.operand))
+    else:
+        raise TypeError(f"Unsupported expression: {node}")
+
+
+def safe_eval_expr(expr: str) -> float:
     """
-    A simple calculator that evaluates basic arithmetic expressions.
-    E.g., "2 + 3 * 4" -> 14
+    Safely evaluates an arithmetic expression using AST.
     """
     try:
-        if re.fullmatch(r'[\d\s\+\-\*\/\.\(\)]+', expression):
-            result = eval(expression)
-            return result
-        else:
-            return "Invalid expression."
+        parsed_expr = ast.parse(expr, mode="eval").body
+        return _safe_eval(parsed_expr)
+    except Exception as e:
+        raise ValueError(f"Error evaluating expression: {e}")
+
+
+def simple_calculator(expression: str) -> Any:
+    """
+    A safe calculator that evaluates basic arithmetic expressions.
+    E.g., "2 + 3 * 4" -> 14
+    """
+    # Optional: basic regex validation (allows digits, spaces, and arithmetic operators)
+    if not re.fullmatch(r'[\d\s\+\-\*\/\.\(\)]+', expression):
+        return "Invalid expression."
+    try:
+        result = safe_eval_expr(expression)
+        return result
     except Exception as e:
         return f"Error: {e}"
 
-# --- Step 5: Retrieval augmented generation using ArXiv documents ---
-def retrieve_context(query: str, index, documents, embedder, k: int = 2):
+
+# --- Step 5: Retrieval Augmented Generation using ArXiv Documents ---
+def retrieve_context(query: str, index: faiss.IndexFlatL2, documents: List[str],
+                     embedder: SentenceTransformer, k: int = 2) -> List[str]:
     """
     Given a query, retrieves k relevant documents from the FAISS index.
     """
@@ -99,7 +163,10 @@ def retrieve_context(query: str, index, documents, embedder, k: int = 2):
     retrieved = [documents[idx] for idx in indices[0]]
     return retrieved
 
-def generate_answer(query: str, retrieved_context, tokenizer, model, max_new_tokens: int = 150):
+
+def generate_answer(query: str, retrieved_context: List[str],
+                    tokenizer: AutoTokenizer, model: Any,
+                    max_new_tokens: int = 150) -> str:
     """
     Uses Gemma to generate an answer by combining retrieved context with the query.
     """
@@ -120,8 +187,11 @@ def generate_answer(query: str, retrieved_context, tokenizer, model, max_new_tok
     answer = tokenizer.decode(output_ids[0], skip_special_tokens=True)
     return answer
 
+
 # --- Step 6: The Agent ---
-def agent(query: str, index, documents, embedder, tokenizer, model, k: int):
+def agent(query: str, index: faiss.IndexFlatL2, documents: List[str],
+          embedder: SentenceTransformer, tokenizer: AutoTokenizer,
+          model: Any, k: int) -> str:
     """
     Processes the query: if it starts with "calc:" then uses the calculator;
     otherwise, retrieves relevant arXiv documents and generates an answer.
@@ -135,12 +205,16 @@ def agent(query: str, index, documents, embedder, tokenizer, model, k: int):
         answer = generate_answer(query, retrieved, tokenizer, model)
         return answer
 
+
 # --- Step 7: Evaluation / Benchmarking Routine ---
-def evaluate_agent(test_queries, index, documents, embedder, tokenizer, model, k: int):
+def evaluate_agent(test_queries: List[str], index: faiss.IndexFlatL2, documents: List[str],
+                   embedder: SentenceTransformer, tokenizer: AutoTokenizer,
+                   model: Any, k: int) -> Dict[str, str]:
     results = {}
     for q in test_queries:
         results[q] = agent(q, index, documents, embedder, tokenizer, model, k)
     return results
+
 
 # --- Main Function with CLI Interface ---
 def main():
@@ -174,7 +248,7 @@ def main():
         "--model_name",
         type=str,
         default=default_model_name,
-        help="Name of the language model to use (default: google/gemma-2-9b-it)."
+        help="Name of the language model to use."
     )
     args = parser.parse_args()
 
@@ -183,16 +257,16 @@ def main():
         try:
             num_docs = int(input("Enter the number of papers to fetch: "))
         except ValueError:
-            print("Invalid input. Using default of 10 documents.")
+            logging.warning("Invalid input. Using default of 10 documents.")
             num_docs = 10
     else:
         num_docs = args.num_documents
 
     # Fetch papers from arXiv using the provided number of documents
-    print("Fetching arXiv papers...")
+    logging.info("Fetching arXiv papers...")
     documents = fetch_arxiv_papers(args.query, num_documents=num_docs)
     if not documents:
-        print("No documents fetched. Check your query or network connection.")
+        logging.error("No documents fetched. Check your query or network connection.")
         return
 
     # Initialize embedder and language model
@@ -210,8 +284,8 @@ def main():
             "Summarize the key findings from machine learning research."
         ]
         results = evaluate_agent(test_queries, index, documents, embedder, tokenizer, model, args.retrieval_k)
-        for query, answer in results.items():
-            print("\nQuery:", query)
+        for query_text, answer in results.items():
+            print("\nQuery:", query_text)
             print("Agent Answer:", answer)
     else:
         print("\nEnter your queries (type 'exit' to quit):")
@@ -221,6 +295,7 @@ def main():
                 break
             response = agent(user_input, index, documents, embedder, tokenizer, model, args.retrieval_k)
             print("Agent Answer:", response)
+
 
 if __name__ == "__main__":
     main()
