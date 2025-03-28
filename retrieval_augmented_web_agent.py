@@ -1,14 +1,9 @@
 """
-This project focuses on fetching academic papers from arXiv by using its API
-to collect papers based on a given query. It constructs documents by combining
-each paper’s title and abstract, then computes embeddings with a SentenceTransformer
-and indexes them using FAISS. For a new query, the system retrieves the most
-relevant documents to provide context. Additionally, it incorporates a simple
-calculator tool: if the query starts with a designated prefix (e.g., “calc:”),
-the system evaluates arithmetic expressions directly. Otherwise, it combines
-the retrieved academic context with the query and generates an answer using
-the Gemma model. An evaluation routine further demonstrates the agent’s capabilities
-on a set of predefined queries.
+This project focuses on retrieving web documents using Google search based on a given query.
+It fetches webpages, extracts their textual content using BeautifulSoup, and aggregates them into documents.
+The documents are then encoded using a SentenceTransformer and indexed with FAISS for efficient retrieval.
+For a new query, the system retrieves the most relevant documents to provide context, constructs a prompt,
+and generates an answer using the Gemma language model via Hugging Face's pipeline.
 """
 
 import torch
@@ -24,8 +19,8 @@ from sentence_transformers import SentenceTransformer
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
 # Hugging Face authentication token and model
-hf_token = 
-model_name = 
+hf_token = "YOUR_HF_TOKEN"
+model_name = "YOUR_MODEL_NAME"
 
 def get_web_results(query, num_results=5):
     """
